@@ -29,7 +29,7 @@ const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 
 function todayISO() {
-  return new Date().toISOString().slice(0, 10);
+  return formatLocalDate(new Date());
 }
 
 function getWeekStart(date) {
@@ -47,7 +47,14 @@ function getWeekEnd(date) {
 }
 
 function toISO(date) {
-  return date.toISOString().slice(0, 10);
+  return formatLocalDate(date);
+}
+
+function formatLocalDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function weekValue(date = todayISO()) {
@@ -227,14 +234,18 @@ function tasksInRange(range) {
   if (range === "week") {
     const start = toISO(getWeekStart(todayISO()));
     const end = toISO(getWeekEnd(todayISO()));
-    return tasks.filter((task) => task.date >= start && task.date <= end);
+    return tasks.filter((task) => isDateInRange(task.date, start, end));
   }
   if (range === "month") {
     const start = new Date();
     start.setDate(start.getDate() - 29);
-    return tasks.filter((task) => task.date >= toISO(start));
+    return tasks.filter((task) => isDateInRange(task.date, toISO(start), "9999-12-31"));
   }
   return tasks;
+}
+
+function isDateInRange(date, start, end) {
+  return typeof date === "string" && date >= start && date <= end;
 }
 
 function render() {
@@ -361,14 +372,15 @@ function renderMatrix() {
 }
 
 function renderLogs() {
-  const project = $("#projectFilter").value || "all";
+  const projects = ["all", ...new Set(state.tasks.map((task) => task.project || "未分项目"))];
+  let project = $("#projectFilter").value || "all";
+  if (!projects.includes(project)) project = "all";
   const status = $("#statusFilter").value;
   let tasks = filteredTasks();
   if (project !== "all") tasks = tasks.filter((task) => (task.project || "未分项目") === project);
   if (status !== "all") tasks = tasks.filter((task) => task.status === status);
   tasks.sort(byDateDesc);
 
-  const projects = ["all", ...new Set(state.tasks.map((task) => task.project || "未分项目"))];
   $("#projectFilter").innerHTML = projects
     .map((item) => `<option value="${escapeHTML(item)}">${item === "all" ? "全部项目" : escapeHTML(item)}</option>`)
     .join("");
@@ -547,6 +559,7 @@ async function saveTask(event) {
     createdAt: new Date().toISOString(),
   };
   const index = state.tasks.findIndex((item) => item.id === id);
+  const isNewTask = index < 0;
   if (index >= 0) {
     task.createdAt = state.tasks[index].createdAt;
     state.tasks[index] = task;
@@ -554,10 +567,18 @@ async function saveTask(event) {
     state.tasks.push(task);
   }
   saveTasks();
-  await upsertCloudTask(task);
+  if (isNewTask) resetVisibilityFilters(task);
   closeModal();
   render();
   showToast("已保存工作记录");
+  await upsertCloudTask(task);
+}
+
+function resetVisibilityFilters(task) {
+  $("#todayStatusFilter").value = "all";
+  $("#matrixRange").value = task.date === todayISO() ? "today" : "all";
+  $("#projectFilter").value = "all";
+  $("#statusFilter").value = "all";
 }
 
 async function deleteTask() {
