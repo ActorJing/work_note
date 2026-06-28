@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>工作记录与周报</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark">W</span>
+          <div>
+            <p class="eyebrow" id="currentWeek"></p>
+            <h1 id="pageTitle">今日工作台</h1>
+          </div>
+        </div>
+        <div class="top-actions">
+          <input id="searchInput" class="search" type="search" placeholder="搜索事项、项目或标签" />
+          <button class="primary-button" id="openTaskModal">新增</button>
+        </div>
+      </header>
+
+      <nav class="nav" aria-label="主导航">
+        <button class="nav-item active" data-view="today">今日</button>
+        <button class="nav-item" data-view="matrix">四象限</button>
+        <button class="nav-item" data-view="logs">记录</button>
+        <button class="nav-item" data-view="weekly">周报</button>
+        <button class="nav-item" data-view="insights">总结</button>
+      </nav>
+
+      <section class="sync-panel" id="syncPanel">
+        <div>
+          <strong id="syncStatus">本地模式</strong>
+          <span id="syncHint">配置 Supabase 后可登录并多电脑同步。</span>
+        </div>
+        <div class="auth-controls">
+          <input id="authEmail" type="email" placeholder="邮箱" autocomplete="email" />
+          <input id="authPassword" type="password" placeholder="密码" autocomplete="current-password" />
+          <button id="signInBtn">登录</button>
+          <button id="signUpBtn">注册</button>
+          <button id="signOutBtn">退出</button>
+        </div>
+      </section>
+
+      <section class="view active" id="todayView">
+        <div class="today-hero">
+          <div>
+            <p class="hero-kicker">现在最该推进</p>
+            <h2 id="nextTaskTitle">暂无重点事项</h2>
+            <p id="nextTaskMeta">添加一条重要事项后，这里会自动提示你的下一步。</p>
+          </div>
+          <button class="hero-button" id="quickDone">完成</button>
+        </div>
+
+        <div class="priority-strip" id="priorityStrip"></div>
+
+        <div class="metric-grid">
+          <div class="metric">
+            <span>今日完成</span>
+            <strong id="metricDone">0</strong>
+          </div>
+          <div class="metric">
+            <span>今日耗时</span>
+            <strong id="metricHours">0h</strong>
+          </div>
+          <div class="metric">
+            <span>重点事项</span>
+            <strong id="metricFocus">0</strong>
+          </div>
+          <div class="metric">
+            <span>延期事项</span>
+            <strong id="metricDelayed">0</strong>
+          </div>
+        </div>
+        <div class="section-head">
+          <h2>今日待办</h2>
+          <select id="todayStatusFilter">
+            <option value="all">全部状态</option>
+            <option value="todo">待处理</option>
+            <option value="doing">进行中</option>
+            <option value="done">已完成</option>
+            <option value="delayed">延期</option>
+          </select>
+        </div>
+        <div class="task-list" id="todayList"></div>
+      </section>
+
+      <section class="view" id="matrixView">
+        <div class="section-head">
+          <h2>重要紧急四象限</h2>
+          <select id="matrixRange">
+            <option value="week">本周</option>
+            <option value="all">全部</option>
+            <option value="today">今日</option>
+          </select>
+        </div>
+        <div class="matrix">
+          <div class="axis y-axis">重要</div>
+          <div class="axis x-axis">紧急</div>
+          <section class="quadrant q1" data-quadrant="important-urgent">
+            <h3>重要且紧急</h3>
+            <p>立即处理、控制风险</p>
+            <div class="quadrant-list"></div>
+          </section>
+          <section class="quadrant q2" data-quadrant="important-not-urgent">
+            <h3>重要不紧急</h3>
+            <p>计划推进、沉淀能力</p>
+            <div class="quadrant-list"></div>
+          </section>
+          <section class="quadrant q3" data-quadrant="not-important-urgent">
+            <h3>不重要但紧急</h3>
+            <p>压缩成本、快速响应</p>
+            <div class="quadrant-list"></div>
+          </section>
+          <section class="quadrant q4" data-quadrant="not-important-not-urgent">
+            <h3>不重要不紧急</h3>
+            <p>减少投入、择机处理</p>
+            <div class="quadrant-list"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="logsView">
+        <div class="section-head">
+          <h2>工作记录</h2>
+          <div class="filters">
+            <select id="projectFilter"></select>
+            <select id="statusFilter">
+              <option value="all">全部状态</option>
+              <option value="todo">待处理</option>
+              <option value="doing">进行中</option>
+              <option value="done">已完成</option>
+              <option value="delayed">延期</option>
+              <option value="canceled">取消</option>
+            </select>
+          </div>
+        </div>
+        <div id="logGroups" class="log-groups"></div>
+      </section>
+
+      <section class="view" id="weeklyView">
+        <div class="section-head">
+          <h2>自动周报</h2>
+          <div class="filters">
+            <input id="weekPicker" type="week" />
+            <button id="generateWeekly">生成周报</button>
+            <button id="copyWeekly">复制</button>
+          </div>
+        </div>
+        <textarea id="weeklyReport" class="weekly-report" spellcheck="false"></textarea>
+      </section>
+
+      <section class="view" id="insightsView">
+        <div class="section-head">
+          <h2>总结分析</h2>
+          <select id="insightRange">
+            <option value="week">本周</option>
+            <option value="month">近 30 天</option>
+            <option value="all">全部</option>
+          </select>
+        </div>
+        <div class="insight-layout">
+          <div class="chart-panel">
+            <h3>四象限分布</h3>
+            <div id="quadrantBars" class="bars"></div>
+          </div>
+          <div class="chart-panel">
+            <h3>项目投入</h3>
+            <div id="projectBars" class="bars"></div>
+          </div>
+          <div class="summary-panel">
+            <h3>复盘建议</h3>
+            <ul id="suggestions"></ul>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="taskModal" class="modal">
+      <form method="dialog" id="taskForm">
+        <div class="modal-head">
+          <h2 id="modalTitle">新增工作记录</h2>
+          <button type="button" id="closeTaskModal" aria-label="关闭">×</button>
+        </div>
+        <input type="hidden" id="taskId" />
+        <label>
+          事项标题
+          <input id="taskTitle" required maxlength="80" placeholder="例如：完成项目周报整理" />
+        </label>
+        <label>
+          内容说明
+          <textarea id="taskDescription" rows="4" placeholder="补充背景、进展、阻塞或结论"></textarea>
+        </label>
+        <div class="form-grid">
+          <label>
+            日期
+            <input id="taskDate" type="date" required />
+          </label>
+          <label>
+            项目
+            <input id="taskProject" placeholder="例如：运营、研发、客户" />
+          </label>
+          <label>
+            标签
+            <input id="taskTags" placeholder="逗号分隔" />
+          </label>
+          <label>
+            耗时
+            <input id="taskHours" type="number" min="0" max="24" step="0.5" value="1" />
+          </label>
+          <label>
+            状态
+            <select id="taskStatus">
+              <option value="todo">待处理</option>
+              <option value="doing">进行中</option>
+              <option value="done">已完成</option>
+              <option value="delayed">延期</option>
+              <option value="canceled">取消</option>
+            </select>
+          </label>
+          <label>
+            截止日期
+            <input id="taskDueDate" type="date" />
+          </label>
+        </div>
+        <div class="toggle-row">
+          <label class="check-label">
+            <input id="taskImportant" type="checkbox" />
+            重要
+          </label>
+          <label class="check-label">
+            <input id="taskUrgent" type="checkbox" />
+            紧急
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="danger-button" id="deleteTask">删除</button>
+          <span></span>
+          <button type="button" id="cancelTask">取消</button>
+          <button class="primary-button" value="submit">保存</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast" role="status"></div>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="supabase-config.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
