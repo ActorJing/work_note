@@ -123,7 +123,7 @@ async function initCloud() {
 
 async function loadCloudTasks() {
   if (!state.supabase || !state.user) return;
-  const { data, error } = await state.supabase.from("tasks").select("id,data,updated_at").order("updated_at", { ascending: false });
+  const { data, error } = await state.supabase.from("tasks").select("id,data,updated_at").eq("user_id", state.user.id).order("updated_at", { ascending: false });
   if (error) {
     showToast(`同步失败：${error.message}`);
     return;
@@ -149,7 +149,7 @@ async function upsertCloudTask(task) {
 
 async function deleteCloudTask(id) {
   if (!state.supabase || !state.user) return;
-  const { error } = await state.supabase.from("tasks").delete().eq("id", id);
+  const { error } = await state.supabase.from("tasks").delete().eq("id", id).eq("user_id", state.user.id);
   if (error) showToast(`云端删除失败：${error.message}`);
 }
 
@@ -298,45 +298,15 @@ function statusClass(status) {
 }
 
 function renderToday() {
-
-  // 今天新增的任务
-  const todayTasks = filteredTasks().filter(
-    (task) => task.date === todayISO()
-  );
-
-  // 历史未完成任务
-  const historyTasks = filteredTasks().filter(
-    (task) =>
-      task.date < todayISO() &&
-      ["todo", "doing", "delayed"].includes(task.status)
-  );
-
-  // 首页显示 = 今天任务 + 历史未完成任务
-  const displayTasks = [...todayTasks, ...historyTasks];
-
+  const todayTasks = filteredTasks().filter((task) => task.date === todayISO());
   const status = $("#todayStatusFilter").value;
-
-  const visible =
-    status === "all"
-      ? displayTasks
-      : displayTasks.filter((task) => task.status === status);
-
-  renderNextTask(displayTasks);
-  renderPriorityStrip(displayTasks);
-
-  // 今日统计仍然只统计今天
-  $("#metricDone").textContent =
-    todayTasks.filter((task) => task.status === "done").length;
-
-  $("#metricHours").textContent =
-    `${sumHours(todayTasks)}h`;
-
-  $("#metricFocus").textContent =
-    todayTasks.filter((task) => task.important).length;
-
-  $("#metricDelayed").textContent =
-    todayTasks.filter((task) => task.status === "delayed").length;
-
+  const visible = status === "all" ? todayTasks : todayTasks.filter((task) => task.status === status);
+  renderNextTask(todayTasks);
+  renderPriorityStrip(todayTasks);
+  $("#metricDone").textContent = todayTasks.filter((task) => task.status === "done").length;
+  $("#metricHours").textContent = `${sumHours(todayTasks)}h`;
+  $("#metricFocus").textContent = todayTasks.filter((task) => task.important).length;
+  $("#metricDelayed").textContent = todayTasks.filter((task) => task.status === "delayed").length;
   renderTaskList($("#todayList"), visible.sort(byDateDesc));
 }
 
@@ -393,48 +363,12 @@ function renderTaskList(container, tasks, compact = false) {
 }
 
 function renderMatrix() {
-
-    const range = $("#matrixRange").value;
-
-    let tasks = [];
-
-    switch (range) {
-
-        case "active":
-            tasks = state.tasks.filter(task =>
-                ["todo", "doing", "delayed"].includes(task.status));
-            break;
-
-        case "today":
-            tasks = tasksInRange("today").filter(task =>
-                ["todo", "doing", "delayed"].includes(task.status));
-            break;
-
-        case "week":
-            tasks = tasksInRange("week").filter(task =>
-                ["todo", "doing", "delayed"].includes(task.status));
-            break;
-
-        case "all":
-            tasks = state.tasks.filter(task =>
-                ["todo", "doing", "delayed"].includes(task.status));
-            break;
-    }
-
-    tasks.sort(byDateDesc);
-
-    $$(".quadrant").forEach(quadrant => {
-
-        const list = quadrant.querySelector(".quadrant-list");
-
-        const items = tasks.filter(task =>
-            quadrantOf(task) === quadrant.dataset.quadrant
-        );
-
-        renderTaskList(list, items, true);
-
-    });
-
+  const tasks = tasksInRange($("#matrixRange").value).sort(byDateDesc);
+  $$(".quadrant").forEach((quadrant) => {
+    const list = quadrant.querySelector(".quadrant-list");
+    const items = tasks.filter((task) => quadrantOf(task) === quadrant.dataset.quadrant);
+    renderTaskList(list, items, true);
+  });
 }
 
 function renderLogs() {
