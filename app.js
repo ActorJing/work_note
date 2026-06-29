@@ -1,4 +1,4 @@
-const STORAGE_KEY = "workboard.tasks.v1";
+const STORAGE_KEY_BASE = "workboard.tasks.v1";
 const config = window.WORKBOARD_SUPABASE_CONFIG || {};
 
 const statusText = {
@@ -16,8 +16,13 @@ const quadrantText = {
   "not-important-not-urgent": "不重要不紧急",
 };
 
+const demoTaskSignatures = new Set([
+  "整理本周重点项目进展|项目管理|周报,复盘|doing|1.5|true|true",
+  "拆分下周长期能力建设事项|个人成长|计划|todo|2|true|false",
+]);
+
 const state = {
-  tasks: loadTasks(),
+  tasks: loadTasks(null),
   view: "today",
   search: "",
   supabase: null,
@@ -27,6 +32,26 @@ const state = {
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
+
+function getStorageKey(userId) {
+  return userId ? `${STORAGE_KEY_BASE}.${userId}` : `${STORAGE_KEY_BASE}.anon`;
+}
+
+function taskSignature(task) {
+  return `${task.title}|${task.project || ""}|${(task.tags || []).join(",")}|${task.status}|${task.hours}|${task.important}|${task.urgent}`;
+}
+
+function isDemoTask(task) {
+  return demoTaskSignatures.has(taskSignature(task));
+}
+
+function sanitizeTasks(tasks) {
+  const sanitized = (tasks || []).filter((task) => !isDemoTask(task));
+  if (sanitized.length !== (tasks || []).length) {
+    return sanitized;
+  }
+  return tasks || [];
+}
 
 function todayISO() {
   return formatLocalDate(new Date());
@@ -76,20 +101,55 @@ function weekToRange(value) {
   return [toISO(start), toISO(end)];
 }
 
-function loadTasks() {
-  const saved = localStorage.getItem(STORAGE_KEY);
+function loadTasks(userId) {
+  const key = getStorageKey(userId);
+  const saved = localStorage.getItem(key);
   if (saved) {
     try {
-      return JSON.parse(saved);
+      return sanitizeTasks(JSON.parse(saved));
     } catch {
-      return seedTasks();
+      return userId === null ? seedTasks(key) : [];
     }
   }
-  return seedTasks();
+  if (userId === null) {
+    return seedTasks(key);
+  }
+  return [];
+}
+
+function loadAnonymousTasks() {
+  const key = getStorageKey(null);
+  if (!localStorage.getItem(key)) return [];
+  const tasks = loadTasks(null);
+  if (!tasks.length) {
+    localStorage.removeItem(key);
+  }
+  return tasks;
 }
 
 function saveTasks() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.tasks));
+  localStorage.setItem(getStorageKey(state.user?.id), JSON.stringify(state.tasks));
+}
+
+function taskTimestamp(task) {
+  return new Date(task.updatedAt || task.createdAt || 0).getTime();
+}
+
+function mergeTasks(localTasks, cloudTasks) {
+  const localMap = Object.fromEntries(localTasks.map((task) => [task.id, task]));
+  const cloudMap = Object.fromEntries(cloudTasks.map((task) => [task.id, task]));
+  const allIds = new Set([...Object.keys(localMap), ...Object.keys(cloudMap)]);
+  return [...allIds].map((id) => {
+    const local = localMap[id];
+    const cloud = cloudMap[id];
+    if (!local) return cloud;
+    if (!cloud) return local;
+    return taskTimestamp(local) >= taskTimestamp(cloud) ? local : cloud;
+  });
+}
+
+function buildTaskMap(tasks) {
+  return Object.fromEntries(tasks.map((task) => [task.id, task]));
 }
 
 function isCloudConfigured() {
@@ -110,14 +170,26 @@ async function initCloud() {
   const { data } = await state.supabase.auth.getSession();
   state.user = data.session?.user || null;
   state.syncReady = Boolean(state.user);
+  if (state.user) {
+    const anonTasks = loadAnonymousTasks();
+    const userTasks = loadTasks(state.user.id);
+    state.tasks = mergeTasks(anonTasks, userTasks);
+    await loadCloudTasks();
+  }
   state.supabase.auth.onAuthStateChange(async (_event, session) => {
     state.user = session?.user || null;
     state.syncReady = Boolean(state.user);
-    if (state.user) await loadCloudTasks();
+    if (state.user) {
+      const anonTasks = loadAnonymousTasks();
+      const userTasks = loadTasks(state.user.id);
+      state.tasks = mergeTasks(anonTasks, userTasks);
+      await loadCloudTasks();
+    } else {
+      state.tasks = loadTasks(null);
+    }
     renderAuth();
     render();
   });
-  if (state.user) await loadCloudTasks();
   renderAuth();
 }
 
@@ -128,22 +200,32 @@ async function loadCloudTasks() {
     showToast(`同步失败：${error.message}`);
     return;
   }
-  if (data.length) {
-    state.tasks = data.map((row) => ({ id: row.id, ...row.data }));
-    saveTasks();
-    return;
-  }
-  await Promise.all(state.tasks.map((task) => upsertCloudTask(task)));
+  const cloudTasks = sanitizeTasks(data.map((row) => ({ id: row.id, ...row.data })));
+  const anonTasks = loadAnonymousTasks();
+  const userTasks = sanitizeTasks(loadTasks(state.user.id));
+  state.tasks = mergeTasks(mergeTasks(anonTasks, userTasks), cloudTasks);
+  saveTasks();
+  const cloudMap = buildTaskMap(cloudTasks);
+  await Promise.all(
+    state.tasks
+      .filter((task) => !cloudMap[task.id] || taskTimestamp(task) > taskTimestamp(cloudMap[task.id]))
+      .map((task) => upsertCloudTask(task)),
+  );
 }
 
 async function upsertCloudTask(task) {
   if (!state.supabase || !state.user) return;
-  const { error } = await state.supabase.from("tasks").upsert({
-    id: task.id,
-    user_id: state.user.id,
-    data: task,
-    updated_at: new Date().toISOString(),
-  });
+  const { error } = await state.supabase
+    .from("tasks")
+    .upsert(
+      {
+        id: task.id,
+        user_id: state.user.id,
+        data: task,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "id" },
+    );
   if (error) showToast(`云端保存失败：${error.message}`);
 }
 
@@ -169,40 +251,12 @@ function renderAuth() {
   $("#signOutBtn").style.display = configured && signedIn ? "inline-flex" : "none";
 }
 
-function seedTasks() {
-  const today = todayISO();
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  return [
-    {
-      id: crypto.randomUUID(),
-      title: "整理本周重点项目进展",
-      description: "汇总关键节点、风险和下一步计划，作为周报重点内容。",
-      date: today,
-      dueDate: today,
-      project: "项目管理",
-      tags: ["周报", "复盘"],
-      hours: 1.5,
-      status: "doing",
-      important: true,
-      urgent: true,
-      createdAt: new Date().toISOString(),
-    },
-    {
-      id: crypto.randomUUID(),
-      title: "拆分下周长期能力建设事项",
-      description: "把重要不紧急事项放进计划，避免被临时事务挤压。",
-      date: toISO(yesterday),
-      dueDate: "",
-      project: "个人成长",
-      tags: ["计划"],
-      hours: 2,
-      status: "todo",
-      important: true,
-      urgent: false,
-      createdAt: new Date().toISOString(),
-    },
-  ];
+function seedTasks(storageKey) {
+  const tasks = [];
+  if (storageKey) {
+    localStorage.setItem(storageKey, JSON.stringify(tasks));
+  }
+  return tasks;
 }
 
 function quadrantOf(task) {
@@ -230,6 +284,7 @@ function byDateDesc(a, b) {
 function tasksInRange(range) {
   const tasks = filteredTasks();
   if (range === "all") return tasks;
+  if (range === "active") return tasks.filter((task) => task.status !== "done" && task.status !== "canceled");
   if (range === "today") return tasks.filter((task) => task.date === todayISO());
   if (range === "week") {
     const start = toISO(getWeekStart(todayISO()));
@@ -298,11 +353,13 @@ function statusClass(status) {
 }
 
 function renderToday() {
-  const todayTasks = filteredTasks().filter((task) => task.date === todayISO());
+  const today = todayISO();
+  const todayTasks = filteredTasks().filter((task) => task.date && task.date <= today);
   const status = $("#todayStatusFilter").value;
-  const visible = status === "all" ? todayTasks : todayTasks.filter((task) => task.status === status);
-  renderNextTask(todayTasks);
-  renderPriorityStrip(todayTasks);
+  const incompleteTasks = todayTasks.filter((task) => task.status !== "done" && task.status !== "canceled");
+  const visible = status === "all" ? incompleteTasks : todayTasks.filter((task) => task.status === status);
+  renderNextTask(incompleteTasks);
+  renderPriorityStrip(incompleteTasks);
   $("#metricDone").textContent = todayTasks.filter((task) => task.status === "done").length;
   $("#metricHours").textContent = `${sumHours(todayTasks)}h`;
   $("#metricFocus").textContent = todayTasks.filter((task) => task.important).length;
@@ -363,7 +420,9 @@ function renderTaskList(container, tasks, compact = false) {
 }
 
 function renderMatrix() {
-  const tasks = tasksInRange($("#matrixRange").value).sort(byDateDesc);
+  const tasks = tasksInRange($("#matrixRange").value)
+    .filter((task) => task.status !== "done" && task.status !== "canceled")
+    .sort(byDateDesc);
   $$(".quadrant").forEach((quadrant) => {
     const list = quadrant.querySelector(".quadrant-list");
     const items = tasks.filter((task) => quadrantOf(task) === quadrant.dataset.quadrant);
@@ -541,6 +600,7 @@ function closeModal() {
 async function saveTask(event) {
   event.preventDefault();
   const id = $("#taskId").value || crypto.randomUUID();
+  const now = new Date().toISOString();
   const task = {
     id,
     title: $("#taskTitle").value.trim(),
@@ -556,7 +616,8 @@ async function saveTask(event) {
     status: $("#taskStatus").value,
     important: $("#taskImportant").checked,
     urgent: $("#taskUrgent").checked,
-    createdAt: new Date().toISOString(),
+    createdAt: now,
+    updatedAt: now,
   };
   const index = state.tasks.findIndex((item) => item.id === id);
   const isNewTask = index < 0;
@@ -655,6 +716,7 @@ async function signOut() {
   await state.supabase.auth.signOut();
   state.user = null;
   state.syncReady = false;
+  state.tasks = loadTasks(null);
   renderAuth();
   render();
   showToast("已退出登录");
